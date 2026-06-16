@@ -28,6 +28,7 @@ services:
       - CARPETA_DESTINO=/data/destino
       - UMBRAL_HORAS_CLUSTER=${UMBRAL_HORAS_CLUSTER}
       - MIN_FOTOS_EVENTO=${MIN_FOTOS_EVENTO}
+      - PYTHONUNBUFFERED=1
     volumes:
       - ${RUTA_FOTOS_ORIGEN}:/data/origen
       - ${RUTA_FOTOS_DESTINO}:/data/destino
