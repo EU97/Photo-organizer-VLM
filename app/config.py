@@ -3,10 +3,8 @@ import os
 from datetime import timedelta
 
 class Settings:
-    # URL del contenedor o servidor de Ollama
     OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     
-    # Modelo visual a utilizar (ej: qwen2-vl:7b, llava, moondream)
     MODELO_VLM: str = os.getenv("MODELO_VLM", "qwen2-vl:7b")
     
     # Rutas absolutas dentro del contenedor (mapeadas en el docker-compose)

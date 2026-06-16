@@ -6,7 +6,6 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      # Mapea el puerto del host dinámico al puerto interno fijo de Ollama
       - "${PORT_OLLAMA_HOST}:11434"
     deploy:
       resources:
@@ -23,8 +22,6 @@ services:
     ports:
       - "${PORT_ORGANIZER_HOST}:8000"
     environment:
-      # CRUCIAL: Aquí se comunican por la red interna de Docker. 
-      # Se usa el nombre del servicio 'ollama' y su puerto interno '11434'.
       - OLLAMA_HOST=http://ollama:11434
       - MODELO_VLM=${MODELO_VLM}
       - CARPETA_ORIGEN=/data/origen
