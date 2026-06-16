@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: photo-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  organizer-service:
+    build: .
+    container_name: photo-organizer-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - MODELO_VLM=qwen2-vl:7b  # Escalado al modelo 7B para tu GPU
+      - CARPETA_ORIGEN=/data/origen
+      - CARPETA_DESTINO=/data/destino
+    volumes:
+      # Montamos tus discos/almacenamientos físicos dentro del contenedor
+      - /ruta/real/de/tus/fotos_desordenadas:/data/origen
+      - /ruta/real/de/tu/destino_limpio:/data/destino
+    depends_on:
+      - ollama
+
+volumes:
+  ollama_data:
