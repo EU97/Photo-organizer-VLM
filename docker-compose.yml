@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   ollama:
     image: ollama/ollama:latest
@@ -8,7 +6,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      - "11434:11434"
+      # Mapea el puerto del host dinámico al puerto interno fijo de Ollama
+      - "${PORT_OLLAMA_HOST}:11434"
     deploy:
       resources:
         reservations:
@@ -22,16 +21,19 @@ services:
     container_name: photo-organizer-app
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT_ORGANIZER_HOST}:8000"
     environment:
+      # CRUCIAL: Aquí se comunican por la red interna de Docker. 
+      # Se usa el nombre del servicio 'ollama' y su puerto interno '11434'.
       - OLLAMA_HOST=http://ollama:11434
-      - MODELO_VLM=qwen2-vl:7b  # Escalado al modelo 7B para tu GPU
+      - MODELO_VLM=${MODELO_VLM}
       - CARPETA_ORIGEN=/data/origen
       - CARPETA_DESTINO=/data/destino
+      - UMBRAL_HORAS_CLUSTER=${UMBRAL_HORAS_CLUSTER}
+      - MIN_FOTOS_EVENTO=${MIN_FOTOS_EVENTO}
     volumes:
-      # Montamos tus discos/almacenamientos físicos dentro del contenedor
-      - /ruta/real/de/tus/fotos_desordenadas:/data/origen
-      - /ruta/real/de/tu/destino_limpio:/data/destino
+      - ${RUTA_FOTOS_ORIGEN}:/data/origen
+      - ${RUTA_FOTOS_DESTINO}:/data/destino
     depends_on:
       - ollama
 
