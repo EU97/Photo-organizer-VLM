@@ -9,12 +9,10 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from geopy.geocoders import Nominatim
 import ollama
+import re
 
 from app import settings 
 
-# =====================================================================
-# EVENTO DE INICIO (LIFESPAN) - LOGICA AUTODESPLEGABLE
-# =====================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("⏳ Conectando con el contenedor de Ollama...")
@@ -37,7 +35,6 @@ async def lifespan(app: FastAPI):
         lista_modelos = [m.get('model') for m in modelos_locales.get('models', [])]
         modelo_buscado = settings.MODELO_VLM
         
-        # Comprobación flexible por si Ollama añade o quita el tag ':latest'
         if modelo_buscado not in lista_modelos and f"{modelo_buscado}:latest" not in lista_modelos:
             print(f"📥 El modelo '{modelo_buscado}' no se encontró en el almacenamiento local.")
             print(f"📥 Iniciando descarga automática de '{modelo_buscado}' desde el registro oficial...")
@@ -56,7 +53,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Cognitive Photo Organizer Service", 
     version="1.0",
-    lifespan=lifespan  # <-- Vinculamos el ciclo de vida autodesplegable
+    lifespan=lifespan
 )
 
 geolocator = Nominatim(user_agent="organizador_fotos_container")
@@ -102,20 +99,77 @@ def obtener_nombre_lugar(lat, lon):
     return None
 
 def analizar_con_vlm(ruta_imagen):
-    prompt = (
-        "Analyze this image. You must respond ONLY with a valid JSON object. "
-        "Do not include markdown formatting like ```json. Just raw JSON.\n"
-        "Format: {\"tipo\": \"foto_real\"|\"meme\"|\"captura_pantalla\", "
-        "\"contexto_evento\": \"graduacion\"|\"boda\"|\"laboratorio\"|\"viaje\"|\"vida_cotidiana\"}"
-    )
+    prompt = """
+    Analyze this image. You must respond ONLY with a valid JSON object. 
+    Do not include conversational filler or markdown formatting. Just raw JSON.
+
+    CRITICAL CLASSIFICATION RULES:
+    1. If the image is a screenshot of engineering software, 3D CAD models (SolidWorks), CFD meshes (Ansys Fluent), coding IDEs, or university lecture slides, classify it strictly as "simulacion_y_software_academico". Do NOT put it in "prototipos_y_uavs" unless a physical drone/aircraft is visible.
+    2. Do NOT put screenshots of web dashboards or text terminals into "home_lab_y_servidores" if they belong to university software tools or academic work.
+    3. Use "prototipos_y_uavs" ONLY for physical drones, real aircraft parts, carbon fiber materials, or active flight tests.
+
+    Format: {
+      "tipo": "foto_real"|"meme"|"captura_pantalla"|"documento_texto",
+      "contexto_evento": "prototipos_y_uavs"|"investigacion_laboratorio"|"experimentos_biologicos"|"divulgacion_cientifica"|"home_lab_y_servidores"|"simulacion_y_software_academico"|"eventos_academicos"|"graduacion"|"boda"|"conciertos_y_festivales"|"citas_y_salidas"|"amigos_y_reuniones"|"selfies_y_retratos"|"gastronomia_y_restaurantes"|"mascotas_gatos"|"mantenimiento_automotriz"|"viajes_y_turismo"|"arquitectura_y_ciudad"|"coleccionables_y_hobbies"|"vida_cotidiana"
+    }
+    """
+    
+    ruta_temporal = ruta_imagen + ".vlm_tmp.jpg"
+    
     try:
-        response = client.generate(model=settings.MODELO_VLM, prompt=prompt, images=[ruta_imagen])
-        data = json.loads(response['response'].strip())
-        return data.get('tipo', 'foto_real'), data.get('contexto_evento', 'vida_cotidiana')
+        with Image.open(ruta_imagen) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.thumbnail((640, 640))
+            img.save(ruta_temporal, "JPEG", quality=75)
+        
+        response = client.generate(
+            model=settings.MODELO_VLM, 
+            prompt=prompt, 
+            images=[ruta_temporal],
+            options={
+                "num_ctx": 4096,
+                "temperature": 0.1
+            }
+        )
+        
+        respuesta_sucia = response['response'].strip()
+        
+        inicio_json = respuesta_sucia.find('{')
+        fin_json = respuesta_sucia.rfind('}')
+        
+        if inicio_json != -1 and fin_json != -1:
+            respuesta_limpia = respuesta_sucia[inicio_json:fin_json + 1]
+        else:
+            respuesta_limpia = respuesta_sucia
+
+        try:
+            # Plan A: Intentar parsear el JSON de forma estricta
+            data = json.loads(respuesta_limpia)
+            tipo_visual = data.get('tipo', 'foto_real')
+            contexto = data.get('contexto_evento', 'vida_cotidiana')
+        except json.JSONDecodeError:
+            print(f"⚠️ Sintaxis JSON rota en {os.path.basename(ruta_imagen)}. Activando extractor de emergencia...")
+            
+            match_tipo = re.search(r'"tipo"\s*:\s*"([^"]+)"', respuesta_sucia)
+            match_contexto = re.search(r'"contexto_evento"\s*:\s*"([^"]+)"', respuesta_sucia)
+            
+            tipo_visual = match_tipo.group(1) if match_tipo else 'foto_real'
+            contexto = match_contexto.group(1) if match_contexto else 'vida_cotidiana'
+            
+        contexto = contexto.replace(" ", "_").strip("/\\.:*?\"<>|")
+        return tipo_visual, contexto
+        
     except Exception as e:
-        # <-- NUEVO: Si Ollama da timeout o truena, aquí lo sabremos de inmediato
-        print(f"⚠️ Error al analizar con VLM la foto {os.path.basename(ruta_imagen)}: {e}")
+        print(f"⚠️ Error crítico al analizar con VLM la foto {os.path.basename(ruta_imagen)}: {e}")
         return 'foto_real', 'vida_cotidiana'
+        
+    finally:
+        if os.path.exists(ruta_temporal):
+            try:
+                os.remove(ruta_temporal)
+            except Exception:
+                pass
 
 def ejecutar_pipeline_organizacion():
     if not os.path.exists(settings.CARPETA_ORIGEN):
@@ -150,7 +204,6 @@ def ejecutar_pipeline_organizacion():
     clusters.append(cluster_actual)
     print(f"🧩 Se estructuraron {len(clusters)} grupos cronológicos de eventos/días.")
 
-    # Contador global para los logs
     foto_actual = 0
     total_fotos = len(archivos)
 
@@ -171,10 +224,15 @@ def ejecutar_pipeline_organizacion():
         
         for foto in cluster:
             foto_actual += 1
-            # <-- NUEVO: Este print te dirá exactamente qué está haciendo la GPU en cada segundo
             print(f"🤖 [{foto_actual}/{total_fotos}] Analizando cognitivamente: {foto['nombre']}...")
             
+            # Medición exacta del tiempo por foto
+            t_inicio = time.time()
             tipo_visual, contexto = analizar_con_vlm(foto['ruta'])
+            t_fin = time.time()
+            duracion = t_fin - t_inicio
+            
+            print(f"⏱️ [Tiempo]: {duracion:.2f}s | Tipo: {tipo_visual} | Contexto: {contexto}")
             
             if tipo_visual in ['meme', 'captura_pantalla']:
                 ruta_final = os.path.join(settings.CARPETA_DESTINO, año, mes, f"Descartes_{tipo_visual}")
